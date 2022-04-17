@@ -16,8 +16,10 @@ import (
 const (
 	optionnameTarget        = "target"
 	optionnameMinus         = "minus"
+	optionnameDryRun        = "dryrun"
 	optionDescriptionTarget = "delete target (delete match files from this directory)"
 	optionDescriptionMinus  = "minus source (read only)"
+	optionDescriptionDryRun = "execute but only report match files. no files will be removed with this option."
 )
 
 func readSingleLine(r io.Reader) (string, error) {
@@ -34,6 +36,20 @@ func readSingleLine(r io.Reader) (string, error) {
 	}
 }
 
+func toAbsDirString(path string) (string, error) {
+	pathstr := filepath.ToSlash(path)
+	if !filepath.IsAbs(pathstr) {
+		// pathstr, err := filepath.Abs(pathstr) // errのために :=してると pathstrも新しい変数になるので外に引き継げない。
+		absdir, err := filepath.Abs(pathstr)
+		if err != nil {
+			return "", err
+		}
+		pathstr = absdir
+	}
+	pathstr = filepath.Clean(pathstr)
+	return pathstr, nil
+}
+
 func usage() {
 	fmt.Fprintf(os.Stderr, "%s -%s [dir to delete files] -%s [dir to compare]", os.Args[0], optionnameTarget, optionnameMinus)
 }
@@ -42,6 +58,7 @@ func main() {
 
 	target := flag.String(optionnameTarget, "", optionDescriptionTarget)
 	minus := flag.String(optionnameMinus, "", optionDescriptionMinus)
+	dryrun := flag.Bool(optionnameDryRun, false, optionDescriptionDryRun)
 
 	flag.Parse()
 
@@ -49,19 +66,21 @@ func main() {
 		usage()
 		log.Fatal("no target to delete file.")
 	}
-	basedir := filepath.ToSlash(*target)
-	if !filepath.IsAbs(basedir) {
-		absdir, err := filepath.Abs(basedir)
-		// basedir, err := filepath.ToSlash(*target) // errのためにこれにすると basedirもこのスコープ用のものが新設されてしまう。
-		if err != nil {
-			log.Fatal("can't get Abstrcat path from target")
-		}
-		basedir = absdir
+	basedir, err := toAbsDirString(*target)
+	if err != nil {
+		log.Fatal("can't get Abstrcat path from target")
 	}
 
 	if *minus == "" {
 		usage()
 		log.Fatal("no comparison source ( minus source ).")
+	}
+	_mindir, err := toAbsDirString(*minus)
+	if err != nil {
+		log.Fatal("can't get Abstrcat path from minus")
+	}
+	if basedir == _mindir {
+		log.Fatal("same directory specified. target is minus.")
 	}
 
 	args := []string{`check`, *target, *minus, `--match=-`, `--config=dummy-rclone.conf`}
@@ -84,6 +103,9 @@ func main() {
 	log.Println("")
 	log.Println("[Notice] This command may remove file without any backup.")
 	log.Println("Input 'ok' and hit enter if you want to continue.")
+	if *dryrun {
+		log.Println("DryRun mode. Even if you enter 'ok', NO files will remove.")
+	}
 	fmt.Print("Please input answer :")
 
 	if ans, err := readSingleLine(os.Stdin); err != nil {
@@ -108,21 +130,33 @@ func main() {
 		removeTargets := []string{}
 
 		for in.Scan() {
-			// fmt.Println(in.Text())
 			removeTargets = append(removeTargets, in.Text())
 		}
 		if err := in.Err(); err != nil {
+			log.Println("Error while reading rclone result.")
 			log.Fatal(err)
 		}
 
 		if len(removeTargets) > 0 {
 			log.Printf("Number of same files = %d\n", len(removeTargets))
-			log.Println("Removing...")
+			if *dryrun {
+				log.Println("Listing...(dryrun mode)")
+			} else {
+				log.Println("Removing...")
+			}
+
 			for _, c := range removeTargets {
 				c = filepath.Join(basedir, c)
-				log.Printf(" > %s ", c)
-				os.Remove(c)
+				if *dryrun {
+					log.Printf(" > %s", c)
+				} else {
+					log.Printf(" > %s ", c)
+					os.Remove(c)
+				}
 			}
+
+			log.Printf(" %d same files\n", len(removeTargets))
+
 		} else {
 			log.Println("No matching files were found.")
 		}
