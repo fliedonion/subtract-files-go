@@ -6,20 +6,25 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/cli/safeexec"
 )
 
 const (
 	optionnameTarget        = "target"
 	optionnameMinus         = "minus"
 	optionnameDryRun        = "dryrun"
-	optionDescriptionTarget = "delete target (delete match files from this directory)"
-	optionDescriptionMinus  = "minus source (read only)"
+	optionnameRclone        = "rclone"
+	optionDescriptionTarget = "search and delete target (delete match files from this directory)"
+	optionDescriptionMinus  = "search source (read only)"
 	optionDescriptionDryRun = "execute but only report match files. no files will be removed with this option."
+	optionDescriptionRclone = "path for rclone executable. if this parameter is specified, \nonly this path will be used to search for rclone."
 )
 
 func readSingleLine(r io.Reader) (string, error) {
@@ -50,8 +55,57 @@ func toAbsDirString(path string) (string, error) {
 	return pathstr, nil
 }
 
+// interface for wrap os.Stat to make testable.
+type statInterface func(string) (fs.FileInfo, error)
+
+func checkRclonePathOpt(rclonePathOpt string, statfunc statInterface) (string, error) {
+	if rclonePathOpt == "" {
+		return "", fmt.Errorf("path is empty")
+	}
+	if fi, err := statfunc(rclonePathOpt); err == nil {
+		if fi.IsDir() {
+			return "", fmt.Errorf("specified rclone path is directory")
+		} else {
+			if strings.ToUpper(filepath.Base(rclonePathOpt)[0:5]) != "RCLONE" {
+				return "", fmt.Errorf("specified rclone path is not starts with rclone")
+			}
+
+			if filepath.IsAbs(rclonePathOpt) {
+				return filepath.Clean(rclonePathOpt), nil
+			}
+
+			if abs, err := filepath.Abs(rclonePathOpt); err != nil {
+				return "", err
+			} else {
+				return filepath.Clean(abs), nil
+			}
+		}
+	} else {
+		return "", fmt.Errorf("specified rclone path is invalid")
+	}
+}
+
+func findRclone(rclonePathOpt string, statfunc statInterface) string {
+
+	// if rclonePathOption is not specified:
+
+	path := os.Getenv("PATH")
+	if path != "" && path[len(path)-1] != os.PathListSeparator {
+		path = path + string(os.PathListSeparator)
+	}
+	os.Setenv("PATH", path+filepath.Dir(os.Args[0]))
+
+	s, err := safeexec.LookPath("rclone")
+	if err != nil {
+		log.Println("rclone not found.")
+		log.Fatal(err)
+	}
+	return s
+}
+
 func usage() {
-	fmt.Fprintf(os.Stderr, "%s -%s [dir to delete files] -%s [dir to compare]", os.Args[0], optionnameTarget, optionnameMinus)
+	fmt.Fprintf(os.Stderr, "%s -%s [dir to delete files] -%s [dir to compare]\n\n", os.Args[0], optionnameTarget, optionnameMinus)
+	flag.Usage()
 }
 
 func main() {
@@ -59,9 +113,11 @@ func main() {
 	target := flag.String(optionnameTarget, "", optionDescriptionTarget)
 	minus := flag.String(optionnameMinus, "", optionDescriptionMinus)
 	dryrun := flag.Bool(optionnameDryRun, false, optionDescriptionDryRun)
+	rclonePathOpt := flag.String(optionnameRclone, "", optionDescriptionRclone)
 
 	flag.Parse()
 
+	// required parameters check
 	if *target == "" {
 		usage()
 		log.Fatal("no target to delete file.")
@@ -83,9 +139,29 @@ func main() {
 		log.Fatal("same directory specified. target is minus.")
 	}
 
+	// find rclone
+
+	rclonePath := ""
+	if *rclonePathOpt != "" {
+		if result, err := checkRclonePathOpt(*rclonePathOpt, os.Stat); err != nil {
+			log.Printf("-%s parameter is invalid\n", optionnameRclone)
+			log.Fatal(err)
+		} else {
+			rclonePath = result
+		}
+	} else {
+		rclonePath = findRclone(*rclonePathOpt, os.Stat)
+	}
+
+	if rclonePath == "" {
+		log.Fatal("rclone not found")
+	}
+
+	// execute rclone
+
 	args := []string{`check`, *target, *minus, `--match=-`, `--config=dummy-rclone.conf`}
 	// log.Println(args)
-	cmd := exec.Command(`.\rclone.exe`, args...)
+	cmd := exec.Command(rclonePath, args...)
 
 	var bss bytes.Buffer
 	var bes bytes.Buffer
@@ -95,8 +171,9 @@ func main() {
 	cmdErr := cmd.Run()
 	// log.Println(bes.String())
 
-	log.Println("Target: " + *target)
-	log.Println("Minus : " + *minus)
+	// read result.
+	log.Println("Target: " + filepath.Clean(*target))
+	log.Println("Minus : " + filepath.Clean(*minus))
 
 	log.Println("If a file with the same relative path and the same contents is found ")
 	log.Println("in the Minus directory, it is removed from Target.")
@@ -120,7 +197,9 @@ func main() {
 		log.Printf("Your answer is %s, continue.\n", ans)
 	}
 	log.Println("")
-	log.Println("Start operation.")
+
+	// remove same files.
+	log.Println("Start remove samefiles...")
 	if _, ok := cmdErr.(*exec.ExitError); ok {
 		// たぶんファイル内容が全ファイル一致しないと Exit Code が 1 なので、ExitErrorは無視する。
 		// log.Printf("Exit Code, %d\n", exitError.ExitCode())
@@ -155,7 +234,11 @@ func main() {
 				}
 			}
 
-			log.Printf(" %d same files\n", len(removeTargets))
+			if *dryrun {
+				log.Printf(" %d same files found (not removed).\n", len(removeTargets))
+			} else {
+				log.Printf(" %d same files removed.\n", len(removeTargets))
+			}
 
 		} else {
 			log.Println("No matching files were found.")
