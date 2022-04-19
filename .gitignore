@@ -1,0 +1,38 @@
+
+# allow minimum to ignore binary create by `go build`
+/*
+!/LICENSE
+!/.gitignore
+!/.gitattributes
+!/README.md
+
+# go mod
+!/go.mod
+!/go.sum
+
+# build script
+!/Makefile
+!/CMakeLists.txt
+!/*.bat
+!/*.sh
+
+# src, test src, dest(folder only)
+!/src/
+!/test/
+!/dest/
+/dest/*
+!/dest/.gitkeep
+
+
+!/testdata/
+
+
+# project oriented
+!/dummy-rclone.conf
+/rclone.exe
+!/_testdir/
+!/_testdir.7z
+
+# windos
+.DS_Store
+[Tt]humbs.db
