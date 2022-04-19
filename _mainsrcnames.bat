@@ -1,1 +1,1 @@
-@SET _mainsrc=src\cmd\subtract-files.go
+@SET _mainsrc=cmd\subtract-files.go

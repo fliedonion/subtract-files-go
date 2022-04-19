@@ -1,14 +1,14 @@
-
 # allow minimum to ignore binary create by `go build`
 /*
+!/*/
+
+!/go.mod
+!/go.sum
+
 !/LICENSE
 !/.gitignore
 !/.gitattributes
 !/README.md
-
-# go mod
-!/go.mod
-!/go.sum
 
 # build script
 !/Makefile
@@ -16,15 +16,10 @@
 !/*.bat
 !/*.sh
 
-# src, test src, dest(folder only)
-!/src/
-!/test/
+## src, test src, dest(folder only)
 !/dest/
 /dest/*
 !/dest/.gitkeep
-
-
-!/testdata/
 
 
 # project oriented
@@ -33,6 +28,7 @@
 !/_testdir/
 !/_testdir.7z
 
-# windos
+
+# windows / mac
 .DS_Store
 [Tt]humbs.db
